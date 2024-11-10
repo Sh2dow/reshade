@@ -7,6 +7,27 @@
 #include "d3d9_device.hpp"
 #include "d3d9_swapchain.hpp"
 #include "runtime_d3d9.hpp"
+// NFS changes
+#ifdef GAME_MW
+#include "NFSMW_PreFEngHook.h"
+#endif
+#ifdef GAME_CARBON
+#include "NFSC_PreFEngHook.h"
+#endif
+#ifdef GAME_UG2
+#include "NFSU2_PreFEngHook.h"
+#endif
+#ifdef GAME_UG
+#include "NFSU_PreFEngHook.h"
+#endif
+#ifdef GAME_PS
+#include "NFSPS_PreFEngHook.h"
+#endif
+#ifdef GAME_UC
+#include "NFSUC_PreFEngHook.h"
+#endif
+
+Direct3DDevice9* g_pd3dDevice;
 
 extern void dump_and_modify_present_parameters(D3DPRESENT_PARAMETERS &pp, IDirect3D9 *d3d, UINT adapter_index);
 extern void dump_and_modify_present_parameters(D3DPRESENT_PARAMETERS &pp, D3DDISPLAYMODEEX &fullscreen_desc, IDirect3D9Ex *d3d, UINT adapter_index);
@@ -16,6 +37,7 @@ Direct3DDevice9::Direct3DDevice9(IDirect3DDevice9   *original, bool use_software
 	_extended_interface(0),
 	_use_software_rendering(use_software_rendering),
 	_buffer_detection(original) {
+	g_pd3dDevice = this;
 	assert(_orig != nullptr);
 }
 Direct3DDevice9::Direct3DDevice9(IDirect3DDevice9Ex *original, bool use_software_rendering) :
@@ -23,6 +45,7 @@ Direct3DDevice9::Direct3DDevice9(IDirect3DDevice9Ex *original, bool use_software
 	_extended_interface(1),
 	_use_software_rendering(use_software_rendering),
 	_buffer_detection(original) {
+	g_pd3dDevice = this;
 	assert(_orig != nullptr);
 }
 
@@ -88,6 +111,7 @@ ULONG   STDMETHODCALLTYPE Direct3DDevice9::Release()
 #if RESHADE_VERBOSE_LOG
 	LOG(DEBUG) << "Destroyed IDirect3DDevice9" << (_extended_interface ? "Ex" : "") << " object " << this << '.';
 #endif
+	g_pd3dDevice = NULL;
 	delete this;
 
 	return 0;
@@ -258,15 +282,15 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::Reset(D3DPRESENT_PARAMETERS *pPresent
 		_orig->GetDepthStencilSurface(&_auto_depthstencil);
 		SetDepthStencilSurface(_auto_depthstencil.get());
 	}
-
+	g_pd3dDevice = this;
 	return hr;
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice9::Present(const RECT *pSourceRect, const RECT *pDestRect, HWND hDestWindowOverride, const RGNDATA *pDirtyRegion)
 {
 	// Only call into runtime if the entire surface is presented, to avoid partial updates messing up effects and the GUI
-	if (Direct3DSwapChain9::is_presenting_entire_surface(pSourceRect, hDestWindowOverride))
-		_implicit_swapchain->_runtime->on_present();
-	_buffer_detection.reset(false);
+	//if (Direct3DSwapChain9::is_presenting_entire_surface(pSourceRect, hDestWindowOverride))
+	//	_implicit_swapchain->_runtime->on_gui_present();
+	//_buffer_detection.reset(false);
 
 	return _orig->Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }
@@ -413,6 +437,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetDepthStencilSurface(IDirect3DSurfa
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice9::BeginScene()
 {
+	//g_pd3dDevice = _runtime
 	return _orig->BeginScene();
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice9::EndScene()
@@ -749,9 +774,9 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::ComposeRects(IDirect3DSurface9 *pSrc,
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice9::PresentEx(const RECT *pSourceRect, const RECT *pDestRect, HWND hDestWindowOverride, const RGNDATA *pDirtyRegion, DWORD dwFlags)
 {
-	if (Direct3DSwapChain9::is_presenting_entire_surface(pSourceRect, hDestWindowOverride))
-		_implicit_swapchain->_runtime->on_present();
-	_buffer_detection.reset(false);
+	//if (Direct3DSwapChain9::is_presenting_entire_surface(pSourceRect, hDestWindowOverride))
+	//	_implicit_swapchain->_runtime->on_gui_present();
+	//_buffer_detection.reset(false);
 
 	assert(_extended_interface);
 	return static_cast<IDirect3DDevice9Ex *>(_orig)->PresentEx(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion, dwFlags);
@@ -879,3 +904,58 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9::GetDisplayModeEx(UINT iSwapChain, D3D
 	assert(_implicit_swapchain->_extended_interface);
 	return static_cast<IDirect3DSwapChain9Ex *>(_implicit_swapchain)->GetDisplayModeEx(pMode, pRotation);
 }
+
+#if defined(GAME_UC) || defined(GAME_PS)
+#ifdef GAME_UC
+bool bGlobalMotionBlur = false;
+int NFSUC_MOTIONBLUR_ExitPointTrue = NFSUC_MOTIONBLUR_EXIT_TRUE;
+int NFSUC_MOTIONBLUR_ExitPointFalse = NFSUC_MOTIONBLUR_EXIT_FALSE;
+void __declspec(naked) MotionBlur_EntryPoint()
+{
+	if (!bGlobalMotionBlur)
+		_asm jmp NFSUC_MOTIONBLUR_ExitPointFalse
+	_asm
+	{
+		push 0xA
+		mov ecx, 0xDF1DE0
+		jmp NFSUC_MOTIONBLUR_ExitPointTrue
+	}
+}
+#endif
+void __stdcall ReShade_Hook()
+{
+	Direct3DDevice9* g_pd3dDevice = *(Direct3DDevice9**)NFS_D3D9_DEVICE_ADDRESS;
+#ifdef GAME_UC
+	bGlobalMotionBlur = g_pd3dDevice->_implicit_swapchain->_runtime->bMotionBlur; // hax for MotionBlur toggle because we can't read from runtime in the game...
+#endif
+	g_pd3dDevice->_implicit_swapchain->_runtime->on_nfs_present(); // render ReShade BEFORE FE renders ingame! TODO: dig deeper and make ONLY ReShade UI above the FE!
+}
+
+int NFSUC_ExitPoint1 = NFSUC_EXIT1;
+int NFSUC_ExitPoint2 = NFSUC_EXIT2;
+int NFSUC_EntryPoint_EBX = 0;
+void __declspec(naked) ReShade_EntryPoint()
+{
+	_asm mov NFSUC_EntryPoint_EBX, ebx
+	ReShade_Hook();
+	if (*(bool*)(NFSUC_EntryPoint_EBX + 0xA))
+		_asm jmp NFSUC_ExitPoint1
+	_asm jmp NFSUC_ExitPoint2
+}
+
+
+#else
+void(__thiscall* FEManager_Render)(unsigned int dis) = (void(__thiscall*)(unsigned int))FEMANAGER_RENDER_ADDRESS;
+void __stdcall FEManager_Render_Hook()
+{
+	unsigned int TheThis = 0;
+	_asm mov TheThis, ecx
+	// TexMod "fix"
+	// since TexMod is a hacky and leechy piece of garbage, we have to use regular pointers to D3D9 functions... without TexMod it works fine so there's that
+	// NOTE FOR MODDERS: Please, for the love of everything that exists AVOID USING TEXMOD
+	//Direct3DDevice9* g_pd3dDevice = *(Direct3DDevice9**)NFS_D3D9_DEVICE_ADDRESS;
+
+	g_pd3dDevice->_implicit_swapchain->_runtime->on_nfs_present(); // render ReShade BEFORE FE renders ingame! TODO: dig deeper and make ONLY ReShade UI above the FE! MW done!
+	FEManager_Render(TheThis);
+}
+#endif

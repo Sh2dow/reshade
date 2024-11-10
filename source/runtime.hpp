@@ -135,6 +135,9 @@ namespace reshade
 		/// <param name="function">The callback function.</param>
 		void subscribe_to_save_config(std::function<void(ini_file &)> function);
 
+#ifdef GAME_UC
+		bool bMotionBlur;
+#endif
 	protected:
 		runtime();
 		virtual ~runtime();
@@ -152,6 +155,17 @@ namespace reshade
 		/// Callback function called every frame.
 		/// </summary>
 		void on_present();
+		/// <summary>
+		/// Callback function called every frame.
+		/// </summary>
+		void on_gui_present();
+		/// <summary>
+		/// Callback function called every frame.
+		/// </summary>
+		void on_nfs_present();
+		/// <summary>
+		/// Callback function called every frame.
+		/// </summary>
 
 		/// <summary>
 		/// Compile effect from the specified source file and initialize textures, uniforms and techniques.
@@ -367,6 +381,7 @@ namespace reshade
 		void draw_gui_statistics();
 		void draw_gui_log();
 		void draw_gui_about();
+		void draw_gui_nfs();
 
 		void draw_code_editor();
 		void draw_code_viewer();
