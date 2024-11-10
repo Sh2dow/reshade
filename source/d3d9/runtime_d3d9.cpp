@@ -10,6 +10,25 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <d3dcompiler.h>
+ // NFS changes
+#ifdef GAME_MW
+#include "NFSMW_PreFEngHook.h"
+#endif
+#ifdef GAME_CARBON
+#include "NFSC_PreFEngHook.h"
+#endif
+#ifdef GAME_UG2
+#include "NFSU2_PreFEngHook.h"
+#endif
+#ifdef GAME_UG
+#include "NFSU_PreFEngHook.h"
+#endif
+#ifdef GAME_PS
+#include "NFSPS_PreFEngHook.h"
+#endif
+#ifdef GAME_UC
+#include "NFSUC_PreFEngHook.h"
+#endif
 
 namespace reshade::d3d9
 {
@@ -223,6 +242,72 @@ void reshade::d3d9::runtime_d3d9::on_reset()
 	_has_depth_texture = false;
 	_depth_surface_override = nullptr;
 #endif
+}
+
+// NFS variant
+void reshade::d3d9::runtime_d3d9::on_nfs_present()
+{
+	if (!_is_initialized )
+		return;
+
+	assert(_buffer_detection != nullptr);
+	_vertices = _buffer_detection->total_vertices();
+	_drawcalls = _buffer_detection->total_drawcalls();
+
+#if RESHADE_DEPTH
+	// Disable INTZ replacement while high network activity is detected, since the option is not available in the UI then, but artifacts may occur without it
+	_buffer_detection->disable_intz = _disable_intz || _has_high_network_activity;
+
+	update_depth_texture_bindings(_has_high_network_activity ? nullptr :
+		_buffer_detection->find_best_depth_surface(_filter_aspect_ratio ? _width : 0, _height, _depth_surface_override));
+#endif
+	_app_state.capture();
+	BOOL software_rendering_enabled = FALSE;
+	if ((_behavior_flags & D3DCREATE_MIXED_VERTEXPROCESSING) != 0)
+		software_rendering_enabled = _device->GetSoftwareVertexProcessing(),
+		_device->SetSoftwareVertexProcessing(FALSE); // Disable software vertex processing since it is incompatible with programmable shaders
+
+	// Resolve MSAA back buffer if MSAA is active
+	if (_backbuffer_resolved != _backbuffer)
+		_device->StretchRect(_backbuffer.get(), nullptr, _backbuffer_resolved.get(), nullptr, D3DTEXF_NONE);
+
+	update_and_render_effects();
+	runtime::on_nfs_present();
+	runtime::on_gui_present();
+	// Stretch main render target back into MSAA back buffer if MSAA is active
+	if (_backbuffer_resolved != _backbuffer)
+		_device->StretchRect(_backbuffer_resolved.get(), nullptr, _backbuffer.get(), nullptr, D3DTEXF_NONE);
+
+	if ((_behavior_flags & D3DCREATE_MIXED_VERTEXPROCESSING) != 0)
+		_device->SetSoftwareVertexProcessing(software_rendering_enabled);
+	// Apply previous state from application
+	_app_state.apply_and_release();
+
+#if RESHADE_DEPTH
+	// Can only reset the tracker after the state block has been applied, to ensure current depth-stencil binding is updated correctly
+	if (_reset_buffer_detection)
+	{
+		_buffer_detection->reset(true);
+		_reset_buffer_detection = false;
+	}
+#endif
+
+}
+
+void reshade::d3d9::runtime_d3d9::on_gui_present()
+{
+	if (!_is_initialized || FAILED(_device->BeginScene()))
+		return;
+	assert(_buffer_detection != nullptr);
+
+	_app_state.capture();
+
+	runtime::on_gui_present();
+
+	// Apply previous state from application
+	_app_state.apply_and_release();
+
+	_device->EndScene();
 }
 
 void reshade::d3d9::runtime_d3d9::on_present()
